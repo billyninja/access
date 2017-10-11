@@ -5,11 +5,12 @@ import (
     "time"
     "io/ioutil"
     "strings"
+    "sort"
 )
 
 type LogEntry struct{
     Time        time.Time
-    ClientIP    string
+    IP    string
     UA          string
     Status      string
     Method      string
@@ -37,6 +38,12 @@ type Client struct {
     PerUrl      []*UrlCount
 }
 
+type ByHits []*Client
+
+func (a ByHits) Len() int           { return len(a) }
+func (a ByHits) Swap(i, j int)      { a[i], a[j] = a[j], a[i] }
+func (a ByHits) Less(i, j int) bool { return a[i].Hits < a[j].Hits }
+
 func get_log_entry(line string) *LogEntry {
     fragsA := strings.Split(line, "\"")
     if len(fragsA) == 0 {
@@ -51,7 +58,7 @@ func get_log_entry(line string) *LogEntry {
     fragsD := strings.Split(fragsA[1], " ")
 
     return &LogEntry{
-        ClientIP: fragsB[0],
+        IP: fragsB[0],
         UA: fragsA[5],
         Status: fragsC[0],
         Method: fragsD[0],
@@ -69,18 +76,32 @@ func main() {
         println("Err: ", err)
         return
     }
+
+    sorted := []*Client{}
     lines := strings.Split(string(content), "\n")
-    all := make([]*LogEntry, len(lines))
-    for i, ll := range lines {
-        all[i] = get_log_entry(ll)
-        if all[i] == nil {
+    for _, ll := range lines {
+        le := get_log_entry(ll)
+        if le == nil {
             continue
         }
 
-        mkey := fmt.Sprintf("%s---%s", all[i].ClientIP, all[i].UA)
+        mkey := fmt.Sprintf("%s---%s", le.IP, le.UA)
         if val, ok := CliMap[mkey]; ok {
-            println(val)
+            val.Hits += 1
+        } else {
+            cli := &Client{
+                IP:  le.IP,
+                UA: le.UA,
+                Hits: 1,
+            }
+            CliMap[mkey] = cli
+            sorted = append(sorted, cli)
         }
     }
+    sort.Reverse(ByHits(sorted))
     fmt.Printf("\n%s\n", time.Since(t1))
+    println("=== Top 10 Hitters ===")
+    for i := 0; i < 10; i++ {
+        println(sorted[1].Hits)
+    }
 }
