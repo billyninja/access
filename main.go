@@ -1,20 +1,15 @@
 package main
 
-/*
-    filtering engine:
-       methods, url prefixes, url suffixes
-
-    Detect Time Window
-        1 - parse datetime
-*/
-
-
 import (
     "fmt"
     "time"
     "io/ioutil"
     "strings"
     "sort"
+    "net/http"
+    "crypto/tls"
+    "sync"
+   "encoding/json"
 )
 
 var (
@@ -24,6 +19,45 @@ var (
 const (
     DATE_FMT_A = "02/Jan/2006:15:04:05 -0700"
 )
+
+func GetGeo(cli *Client) error {
+
+    url := fmt.Sprintf("http://services.2xt.com.br/geoip/%s", cli.IP)
+    client := &http.Client{
+        Transport: &http.Transport{
+            TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+        },
+    }
+    req, err := http.NewRequest("GET", url, nil)
+
+    resp, err := client.Do(req)
+    if err != nil {
+        fmt.Printf("\n[GEORPC] error connecting to: %s \n Error: %v\n\n", url, err)
+        return err
+    }
+    if resp.StatusCode != 200 {
+        fmt.Printf("\n[GEORPC] non-200: %s\n", resp.Status)
+        return err
+    }
+
+
+    defer resp.Body.Close()
+    body, _ := ioutil.ReadAll(resp.Body)
+
+    gr := &GeoResp{}
+
+    err = json.Unmarshal(body, gr)
+    if err != nil {
+        fmt.Printf("\n[GEORPC] error unmarshall: %s \n Error: %v\n\n", body, err)
+        return err
+    }
+
+    cli.City = gr.City
+    cli.Country = gr.Country
+
+    return err
+}
+
 
 type Filters struct {
     Methods []string
@@ -66,6 +100,13 @@ type LogEntry struct{
     Method      string
     Url         string
     Ref         string
+}
+
+
+type GeoResp struct {
+    City     string `json:"City"`
+    State    string `json:"State"`
+    Country  string `json:"Country"`
 }
 
 type UrlCount struct {
@@ -149,6 +190,8 @@ func get_log_entry(line string) *LogEntry {
 
 func main() {
 
+    var wg sync.WaitGroup
+
     filter = &Filters{
         Methods: []string{"POST"},
         Prefixes: []string{"/site/aereo"},
@@ -192,8 +235,16 @@ func main() {
             }
             CliMap[mkey] = cli
             sorted = append(sorted, cli)
+            go func() {
+                defer wg.Done()
+                wg.Add(1)
+                GetGeo(cli)
+                time.Sleep(100 * time.Millisecond)
+            }()
         }
     }
+    wg.Wait()
+
     sort.Sort(sort.Reverse(ByHits(sorted)))
     fmt.Printf("\n%s\n", time.Since(t1))
 
@@ -201,8 +252,8 @@ func main() {
                len(lines), first.Time.Format("01/02 15:04"), last.Time.Format("01/02 15:04"),
                count, (float64(count)/float64(len(lines))*100.0))
 
-    fmt.Printf("==== \nTOP - 10 HITTERS \n")
-    for i := 0; i < 10; i++ {
-        fmt.Printf("#%d - %d - %s\n%s\n\n", (i + 1), sorted[i].Hits, sorted[i].IP, sorted[i].UA)
+    fmt.Printf("==== \nTOP - 100 HITTERS \n")
+    for i := 0; i < 100; i++ {
+        fmt.Printf("\n#%d - %d - %s\n%s\n\n%s\n", (i + 1), sorted[i].Hits, sorted[i].IP, sorted[i].UA, sorted[i].Country)
     }
 }
